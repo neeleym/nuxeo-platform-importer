@@ -19,6 +19,9 @@
 
 package org.nuxeo.ecm.platform.importer.base;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import javax.security.auth.login.LoginContext;
@@ -31,8 +34,9 @@ import org.nuxeo.ecm.core.api.CoreSession;
 import org.nuxeo.ecm.core.api.DocumentModel;
 import org.nuxeo.ecm.core.api.repository.Repository;
 import org.nuxeo.ecm.core.api.repository.RepositoryManager;
-import org.nuxeo.ecm.platform.audit.api.job.JobHistoryHelper;
 import org.nuxeo.ecm.platform.importer.factories.ImporterDocumentModelFactory;
+import org.nuxeo.ecm.platform.importer.filter.ImportingDocumentFilter;
+import org.nuxeo.ecm.platform.importer.listener.ImporterListener;
 import org.nuxeo.ecm.platform.importer.log.ImporterLogger;
 import org.nuxeo.ecm.platform.importer.source.SourceNode;
 import org.nuxeo.ecm.platform.importer.threading.ImporterThreadingPolicy;
@@ -45,7 +49,7 @@ import org.nuxeo.runtime.api.Framework;
  * @author Thierry Delprat
  *
  */
-public class GenericThreadedImportTask implements Runnable {
+class GenericThreadedImportTask implements Runnable {
 
     private static final Log log = LogFactory.getLog(GenericThreadedImportTask.class);
 
@@ -81,7 +85,9 @@ public class GenericThreadedImportTask implements Runnable {
 
     protected String jobName;
 
-    protected JobHistoryHelper jobHelper;
+    protected List<ImporterListener> listeners = new ArrayList<ImporterListener>();
+
+    protected List<ImportingDocumentFilter> importingDocumentFilters = new ArrayList<ImportingDocumentFilter>();
 
     private static synchronized int getNextTaskId() {
         taskCounter += 1;
@@ -123,7 +129,6 @@ public class GenericThreadedImportTask implements Runnable {
         this(session, rootSource, rootDoc, skipContainerCreation, rsLogger,
                 batchSize, factory, threadPolicy);
         this.jobName = jobName;
-        this.jobHelper = new JobHistoryHelper(jobName);
     }
 
     protected CoreSession getCoreSession() throws Exception {
@@ -156,9 +161,12 @@ public class GenericThreadedImportTask implements Runnable {
 
     protected DocumentModel doCreateFolderishNode(DocumentModel parent,
             SourceNode node) throws Exception {
+        if (!shouldImportDocument(node)) {
+            return null;
+        }
+
         DocumentModel folder = getFactory().createFolderishNode(
                 getCoreSession(), parent, node);
-
         if (folder != null) {
             String parentPath = (parent == null) ? "null"
                     : parent.getPathAsString();
@@ -173,6 +181,10 @@ public class GenericThreadedImportTask implements Runnable {
 
     protected DocumentModel doCreateLeafNode(DocumentModel parent,
             SourceNode node) throws Exception {
+        if (!shouldImportDocument(node)) {
+            return null;
+        }
+
         DocumentModel leaf = getFactory().createLeafNode(getCoreSession(),
                 parent, node);
         if (leaf != null && node.getBlobHolder() != null) {
@@ -194,11 +206,23 @@ public class GenericThreadedImportTask implements Runnable {
         return leaf;
     }
 
+    protected boolean shouldImportDocument(SourceNode node) {
+        for (ImportingDocumentFilter importingDocumentFilter : importingDocumentFilters) {
+            if (!importingDocumentFilter.shouldImportDocument(node)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     protected GenericThreadedImportTask createNewTask(DocumentModel parent,
             SourceNode node, ImporterLogger log, Integer batchSize)
             throws Exception {
-        return new GenericThreadedImportTask(null, node, parent,
+        GenericThreadedImportTask newTask = new GenericThreadedImportTask(null, node, parent,
                 skipContainerCreation, log, batchSize, factory, threadPolicy);
+        newTask.addListeners(listeners);
+        newTask.addImportingDocumentFilters(importingDocumentFilters);
+        return newTask;
     }
 
     protected GenericThreadedImportTask createNewTaskIfNeeded(
@@ -239,6 +263,9 @@ public class GenericThreadedImportTask implements Runnable {
                 newThread = true;
             } else {
                 folder = doCreateFolderishNode(parent, node);
+                if (folder == null) {
+                    return;
+                }
             }
 
             List<SourceNode> nodes = node.getChildren();
@@ -302,9 +329,7 @@ public class GenericThreadedImportTask implements Runnable {
             txHelper.commitOrRollbackTransaction();
         } catch (Exception e) {
             try {
-                if (jobHelper != null) {
-                    jobHelper.logJobFailed("Error during import");
-                }
+                notifyImportError();
             } catch (Exception e1) {
                 log.error("Error during import", e1);
             }
@@ -372,6 +397,28 @@ public class GenericThreadedImportTask implements Runnable {
 
     protected ImporterDocumentModelFactory getFactory() {
         return factory;
+    }
+
+    public void addImportingDocumentFilters(ImportingDocumentFilter... importingDocumentFilters) {
+        addImportingDocumentFilters(Arrays.asList(importingDocumentFilters));
+    }
+
+    public void addImportingDocumentFilters(Collection<ImportingDocumentFilter> importingDocumentFilters) {
+        this.importingDocumentFilters.addAll(importingDocumentFilters);
+    }
+
+    public void addListeners(ImporterListener... listeners) {
+        addListeners(Arrays.asList(listeners));
+    }
+
+    public void addListeners(Collection<ImporterListener> listeners) {
+        this.listeners.addAll(listeners);
+    }
+
+    protected void notifyImportError() throws Exception {
+        for (ImporterListener listener : listeners) {
+            listener.importError();
+        }
     }
 
 }
