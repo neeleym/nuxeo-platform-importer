@@ -18,6 +18,7 @@ package org.nuxeo.ecm.platform.importer.service;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.nuxeo.ecm.core.api.NuxeoException;
 import org.nuxeo.ecm.platform.importer.base.GenericMultiThreadedImporter;
 import org.nuxeo.ecm.platform.importer.base.ImporterRunnerConfiguration;
 import org.nuxeo.ecm.platform.importer.executor.AbstractImporterExecutor;
@@ -58,12 +59,16 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
             log.error("Need to set a sourceNode to be used by this importer");
             return;
         }
-        if (getDocumentModelFactory() == null) {
+        ImporterDocumentModelFactory docModelFactory = null;
+		try {
+			docModelFactory = getDocumentModelFactory();
+		} catch (ReflectiveOperationException e) {
             log.error("Need to set a documentModelFactory to be used by this importer");
-        }
-
+			throw new NuxeoException();
+		}
+		
         DefaultImporterExecutor executor = new DefaultImporterExecutor(repositoryName);
-        executor.setFactory(getDocumentModelFactory());
+        executor.setFactory(docModelFactory);
         executor.setTransactionTimeout(transactionTimeout);
         executor.run(sourceNode, destinationPath, skipRootContainerCreation, batchSize, noImportingThreads, true);
     }
@@ -78,9 +83,13 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
             log.error("Need to set a sourceNode to be used by this importer");
             return "Can not import";
         }
-        if (getDocumentModelFactory() == null) {
+        ImporterDocumentModelFactory docModelFactory = null;
+		try {
+			docModelFactory = getDocumentModelFactory();
+		} catch (ReflectiveOperationException e) {
             log.error("Need to set a documentModelFactory to be used by this importer");
-        }
+			throw new NuxeoException();
+		}
 
         ImporterRunnerConfiguration configuration = new ImporterRunnerConfiguration.Builder(sourceNode,
                 destinationPath, executor.getLogger()).skipRootContainerCreation(skipRootContainerCreation).batchSize(
@@ -89,7 +98,7 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
         runner.setTransactionTimeout(transactionTimeout);
         ImporterFilter filter = new EventServiceConfiguratorFilter(false, false, false, true);
         runner.addFilter(filter);
-        runner.setFactory(getDocumentModelFactory());
+        runner.setFactory(docModelFactory);
         return executor.run(runner, interactive);
     }
 
@@ -97,7 +106,12 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
     public String importDocuments(AbstractImporterExecutor executor, String leafType, String folderishType,
             String destinationPath, String sourcePath, boolean skipRootContainerCreation, int batchSize,
             int noImportingThreads, boolean interactive) {
-        ImporterDocumentModelFactory docModelFactory = getDocumentModelFactory();
+        ImporterDocumentModelFactory docModelFactory = null;
+		try {
+			docModelFactory = getDocumentModelFactory();
+		} catch (ReflectiveOperationException e) {
+			throw new NuxeoException();
+		}
         if (docModelFactory instanceof DefaultDocumentModelFactory) {
             DefaultDocumentModelFactory defaultDocModelFactory = (DefaultDocumentModelFactory) docModelFactory;
             defaultDocModelFactory.setLeafType(leafType == null ? getLeafDocType() : leafType);
@@ -134,20 +148,17 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
         return sourceNode;
     }
 
-    protected ImporterDocumentModelFactory getDocumentModelFactory() {
-        if (documentModelFactory == null) {
-            if (docModelFactoryClass == null){
-            	return null;
-            }
+    protected ImporterDocumentModelFactory getDocumentModelFactory() throws ReflectiveOperationException {
+        if (documentModelFactory == null && docModelFactoryClass != null) {
             try {
             	if (DefaultDocumentModelFactory.class.isAssignableFrom(docModelFactoryClass)) {
             		setDocumentModelFactory(docModelFactoryClass.getConstructor(String.class, String.class)
-            				.newInstance(getFolderishDocType(), getLeafDocType()));
+                                                				.newInstance(getFolderishDocType(), getLeafDocType()));
             	} else {
             		setDocumentModelFactory(docModelFactoryClass.getConstructor().newInstance());
             	}
             } catch (ReflectiveOperationException e) {
-            	log.error(e, e);
+            	throw new NuxeoException();
             }
         }
         return documentModelFactory;
@@ -195,6 +206,7 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
     /*
      * @since 5.7.3
      */
+    @Deprecated
     @Override
     public Class<? extends SourceNode> getSourceNodeClass() {
         return sourceNodeClass;
@@ -203,6 +215,7 @@ public class DefaultImporterServiceImpl implements DefaultImporterService {
     /*
      * @since 5.7.3
      */
+    @Deprecated
     @Override
     public Class<? extends ImporterDocumentModelFactory> getDocModelFactoryClass() {
         return docModelFactoryClass;
